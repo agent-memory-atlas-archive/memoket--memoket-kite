@@ -19,51 +19,25 @@ import importlib.metadata
 import json
 import os
 import platform
-import re
 import tempfile
 import time
 import wave
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import scipy.signal as sps
 
+from benchmarks.locomo_asr.data_tools import iter_turns, sha256_file, word_error_rate
+from benchmarks.locomo_asr.generation.assets import validate_reference_voice
 
 SAMPLE_RATE = 16_000
-REFERENCE_SOURCE_SHA256 = (
-    "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
-)
-REFERENCE_VOICE_SHA256 = {
-    "en_US-lessac-medium.onnx": (
-        "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f"
-    ),
-    "en_US-lessac-medium.onnx.json": (
-        "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0"
-    ),
-    "en_US-ryan-medium.onnx": (
-        "abf4c274862564ed647ba0d2c47f8ee7c9b717d27bdad9219100eb310db4047a"
-    ),
-    "en_US-ryan-medium.onnx.json": (
-        "44034c056cb15681b2ad494307c7f3f2e4499d1253c700c711fa0a4607ffe78d"
-    ),
-}
-SESSION_KEY = re.compile(r"^session_\d+$")
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+REFERENCE_SOURCE_SHA256 = "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
 
 
 def atomic_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False)
@@ -73,44 +47,6 @@ def atomic_json(path: Path, payload: Any) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
-
-
-def iter_turns(sample: dict) -> Iterator[dict]:
-    conversation = sample["conversation"]
-    for key, turns in conversation.items():
-        if SESSION_KEY.fullmatch(key):
-            yield from turns
-
-
-def normalise_word(word: str) -> str:
-    return re.sub(r"[^a-z0-9']", "", word.lower())
-
-
-def word_error_rate(reference: str, hypothesis: str) -> float:
-    ref = [normalise_word(word) for word in reference.split()]
-    hyp = [normalise_word(word) for word in hypothesis.split()]
-    ref = [word for word in ref if word]
-    hyp = [word for word in hyp if word]
-    if not ref:
-        return 0.0
-
-    previous = list(range(len(hyp) + 1))
-    for row, ref_word in enumerate(ref, 1):
-        current = [row]
-        for column, hyp_word in enumerate(hyp, 1):
-            if ref_word == hyp_word:
-                current.append(previous[column - 1])
-            else:
-                current.append(
-                    1
-                    + min(
-                        previous[column],
-                        current[column - 1],
-                        previous[column - 1],
-                    )
-                )
-        previous = current
-    return previous[-1] / len(ref)
 
 
 def write_wav(audio: np.ndarray, path: Path) -> None:
@@ -145,9 +81,12 @@ class PiperSynthesizer:
                 source_rate = wav_file.getframerate()
                 if wav_file.getsampwidth() != 2:
                     raise RuntimeError("Piper produced a non-16-bit WAV")
-                audio = np.frombuffer(
-                    wav_file.readframes(wav_file.getnframes()), dtype=np.int16
-                ).astype(np.float32) / 32768.0
+                audio = (
+                    np.frombuffer(
+                        wav_file.readframes(wav_file.getnframes()), dtype=np.int16
+                    ).astype(np.float32)
+                    / 32768.0
+                )
         except Exception as exc:
             raise RuntimeError(f"Piper TTS failed for text {text[:80]!r}") from exc
         finally:
@@ -157,9 +96,9 @@ class PiperSynthesizer:
         if len(audio) < 10:
             raise RuntimeError(f"Piper returned empty audio for text {text[:80]!r}")
         if source_rate != SAMPLE_RATE:
-            audio = sps.resample(
-                audio, int(len(audio) * SAMPLE_RATE / source_rate)
-            ).astype(np.float32)
+            audio = sps.resample(audio, int(len(audio) * SAMPLE_RATE / source_rate)).astype(
+                np.float32
+            )
         return audio
 
 
@@ -173,22 +112,16 @@ def _read_musan_segment(
         channels = handle.getnchannels()
         source_frames = handle.getnframes()
         wanted = int(seconds * source_rate)
-        start = (
-            int(rng.randint(0, max(1, source_frames - wanted)))
-            if source_frames > wanted
-            else 0
-        )
+        start = int(rng.randint(0, max(1, source_frames - wanted))) if source_frames > wanted else 0
         handle.setpos(start)
-        raw = np.frombuffer(
-            handle.readframes(min(wanted, source_frames)), dtype=np.int16
-        ).astype(np.float32)
+        raw = np.frombuffer(handle.readframes(min(wanted, source_frames)), dtype=np.int16).astype(
+            np.float32
+        )
     if channels > 1:
         raw = raw.reshape(-1, channels).mean(axis=1)
     audio = raw / 32768.0
     if source_rate != SAMPLE_RATE and len(audio) > 1:
-        audio = sps.resample(
-            audio, int(len(audio) * SAMPLE_RATE / source_rate)
-        ).astype(np.float32)
+        audio = sps.resample(audio, int(len(audio) * SAMPLE_RATE / source_rate)).astype(np.float32)
     return audio, {
         "source_sample_rate": source_rate,
         "source_frames": source_frames,
@@ -242,15 +175,11 @@ def build_musan_babble(
 
     clips = []
     for _ in range(number_of_clips):
-        selected = rng.choice(
-            len(segments), size=number_of_talkers, replace=False
-        )
+        selected = rng.choice(len(segments), size=number_of_talkers, replace=False)
         mixed = np.zeros(segment_length, dtype=np.float32)
         for index in selected:
             mixed += segments[int(index)] * rng.uniform(0.7, 1.0)
-        clips.append(
-            (mixed / (np.max(np.abs(mixed)) + 1e-9)).astype(np.float32)
-        )
+        clips.append((mixed / (np.max(np.abs(mixed)) + 1e-9)).astype(np.float32))
     return clips, provenance
 
 
@@ -271,9 +200,7 @@ def build_rir_bank(
             rng.uniform(2.5, 3.5),
         ]
         try:
-            absorption, max_order = pra.inverse_sabine(
-                rt60_seconds, dimensions
-            )
+            absorption, max_order = pra.inverse_sabine(rt60_seconds, dimensions)
             source = [
                 rng.uniform(0.5, dimensions[0] - 0.5),
                 rng.uniform(0.5, dimensions[1] - 0.5),
@@ -308,22 +235,16 @@ def build_rir_bank(
         except Exception as exc:
             failures.append(f"{type(exc).__name__}: {exc}")
     if not bank:
-        raise RuntimeError(
-            "pyroomacoustics failed to create every RIR: " + "; ".join(failures)
-        )
+        raise RuntimeError("pyroomacoustics failed to create every RIR: " + "; ".join(failures))
     return bank, provenance
 
 
-def mix_at_snr(
-    reverberant_signal: np.ndarray, noise: np.ndarray, snr_db: float
-) -> np.ndarray:
+def mix_at_snr(reverberant_signal: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:
     signal_power = np.mean(reverberant_signal**2) + 1e-12
     noise_power = np.mean(noise**2) + 1e-12
     scale = np.sqrt(signal_power / (10 ** (snr_db / 10)) / noise_power)
     mixed = reverberant_signal + scale * noise
-    return (mixed / (np.max(np.abs(mixed)) + 1e-9) * 0.95).astype(
-        np.float32
-    )
+    return (mixed / (np.max(np.abs(mixed)) + 1e-9) * 0.95).astype(np.float32)
 
 
 def make_clean_view(source: list[dict]) -> list[dict]:
@@ -384,9 +305,7 @@ def whisper_checkpoint_info(model_name: str) -> dict:
         cache_path = Path.home() / ".cache" / "whisper" / Path(url).name
         return {
             "model": model_name,
-            "checkpoint_sha256": (
-                sha256_file(cache_path) if cache_path.is_file() else None
-            ),
+            "checkpoint_sha256": (sha256_file(cache_path) if cache_path.is_file() else None),
         }
     except Exception:
         return {"model": model_name, "checkpoint_sha256": None}
@@ -404,22 +323,6 @@ def voice_info(path: Path) -> dict:
         "config_filename": config_path.name,
         "config_sha256": sha256_file(config_path),
     }
-
-
-def validate_reference_asset(
-    item: dict, *, allow_mismatch: bool
-) -> None:
-    pairs = (
-        (item["filename"], item["sha256"]),
-        (item["config_filename"], item["config_sha256"]),
-    )
-    for filename, actual in pairs:
-        expected = REFERENCE_VOICE_SHA256.get(filename)
-        if expected and actual != expected and not allow_mismatch:
-            raise RuntimeError(
-                f"{filename} SHA-256 is {actual}, expected {expected}; pass "
-                "--allow-asset-mismatch only if you intend to create a new variant"
-            )
 
 
 def output_path(output_dir: Path, snr: int) -> Path:
@@ -495,10 +398,7 @@ def main() -> int:
     snrs = [int(snr) for snr in args.snrs]
 
     source_sha256 = sha256_file(args.input)
-    if (
-        source_sha256 != REFERENCE_SOURCE_SHA256
-        and not args.allow_source_mismatch
-    ):
+    if source_sha256 != REFERENCE_SOURCE_SHA256 and not args.allow_source_mismatch:
         raise RuntimeError(
             f"source SHA-256 is {source_sha256}, expected "
             f"{REFERENCE_SOURCE_SHA256}; pass --allow-source-mismatch only if "
@@ -514,8 +414,8 @@ def main() -> int:
 
     voice_a = voice_info(args.voice_a)
     voice_b = voice_info(args.voice_b)
-    validate_reference_asset(voice_a, allow_mismatch=args.allow_asset_mismatch)
-    validate_reference_asset(voice_b, allow_mismatch=args.allow_asset_mismatch)
+    validate_reference_voice(voice_a, role="voice-a", allow_mismatch=args.allow_asset_mismatch)
+    validate_reference_voice(voice_b, role="voice-b", allow_mismatch=args.allow_asset_mismatch)
 
     print("Building deterministic MUSAN babble and physical RIR bank ...", flush=True)
     rng = np.random.RandomState(args.seed)
@@ -600,9 +500,7 @@ def main() -> int:
                     "sha256": sha256_file(clean_path),
                     "conversations": len(selected_source),
                     "turns": sum(
-                        1
-                        for source_sample in selected_source
-                        for _ in iter_turns(source_sample)
+                        1 for source_sample in selected_source for _ in iter_turns(source_sample)
                     ),
                     "mean_wer": 0.0,
                 },
@@ -629,28 +527,18 @@ def main() -> int:
             f"{len(turns)} turns x {len(snrs)} SNR tiers",
             flush=True,
         )
-        results: dict[int, dict[str, tuple[str, float]]] = {
-            snr: {} for snr in snrs
-        }
+        results: dict[int, dict[str, tuple[str, float]]] = {snr: {} for snr in snrs}
 
         for turn_index, turn in enumerate(turns):
             dia_id = turn["dia_id"]
             original = turn.get("text", "")
-            clean_audio = synthesizer.synthesize(
-                original, turn.get("speaker") == speaker_a
-            )
+            clean_audio = synthesizer.synthesize(original, turn.get("speaker") == speaker_a)
             rir = rir_bank[int(rng.randint(len(rir_bank)))]
-            reverberant = sps.fftconvolve(clean_audio, rir)[: len(clean_audio)].astype(
-                np.float32
-            )
+            reverberant = sps.fftconvolve(clean_audio, rir)[: len(clean_audio)].astype(np.float32)
             noise = noise_bank[int(rng.randint(len(noise_bank)))]
-            noise = np.tile(
-                noise, int(np.ceil(len(reverberant) / len(noise)))
-            )[: len(reverberant)]
+            noise = np.tile(noise, int(np.ceil(len(reverberant) / len(noise))))[: len(reverberant)]
             noise = np.roll(noise, int(rng.randint(len(noise))))
-            save_this = bool(
-                args.save_audio and audio_saved < args.save_audio_max
-            )
+            save_this = bool(args.save_audio and audio_saved < args.save_audio_max)
             file_stem = f"{sample_id}_{dia_id.replace(':', '_')}"
             if save_this:
                 write_wav(clean_audio, args.save_audio / f"{file_stem}_clean.wav")
@@ -659,9 +547,9 @@ def main() -> int:
                 print(f"  [{dia_id}] {original[:80]}", flush=True)
             for snr in snrs:
                 degraded = mix_at_snr(reverberant, noise, snr)
-                hypothesis = recognizer.transcribe(
-                    degraded, language="en", fp16=False
-                )["text"].strip()
+                hypothesis = recognizer.transcribe(degraded, language="en", fp16=False)[
+                    "text"
+                ].strip()
                 measured_wer = round(word_error_rate(original, hypothesis), 4)
                 results[snr][dia_id] = (hypothesis, measured_wer)
                 if save_this:
@@ -671,8 +559,7 @@ def main() -> int:
                     )
                 if args.verbose:
                     print(
-                        f"      SNR{snr}: WER={measured_wer:.4f} | "
-                        f"{hypothesis[:72]}",
+                        f"      SNR{snr}: WER={measured_wer:.4f} | {hypothesis[:72]}",
                         flush=True,
                     )
             if save_this:
@@ -723,16 +610,14 @@ def main() -> int:
         }
         atomic_json(args.output_dir / "generation_manifest.json", manifest)
         print(
-            f"  saved conversation {sample_id}; "
-            f"checkpoint={shard_path}",
+            f"  saved conversation {sample_id}; checkpoint={shard_path}",
             flush=True,
         )
 
     if not selected_source:
         raise RuntimeError("source dataset contains no conversations")
     print(
-        f"Complete: {len(shards)} conversations in "
-        f"{(time.time() - started) / 60:.1f} minutes",
+        f"Complete: {len(shards)} conversations in {(time.time() - started) / 60:.1f} minutes",
         flush=True,
     )
     return 0
