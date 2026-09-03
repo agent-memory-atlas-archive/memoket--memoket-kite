@@ -16,22 +16,9 @@ specific language governing permissions and limitations under the License.
 
 --------------------------------------------------------------------------------
 
-The original LoCoMo and LongMemEval-S corpora used by KITE's executable
-benchmark bindings are third-party works and are not redistributed here.
-
-This repository redistributes LoCoMo-ASR dataset v1.0.0, a modified derivative
-of LoCoMo, under Creative Commons Attribution-NonCommercial 4.0 International.
-Those JSON files are not covered by Apache-2.0. Their source, modifications,
-terms, and attribution are recorded in LICENSE-DATA.md and
-benchmarks/locomo_asr/THIRD_PARTY_NOTICES.md.
-
-The JSON files preserve upstream external image references and inline media
-that may carry separate third-party rights. Memoket grants no additional rights
-to that media.
-
-The optional generation path depends on external GPL-licensed Piper software
-and separately obtained voice, ASR, and noise assets. Those dependencies,
-models, audio files, and prebuilt environments are not redistributed here.
+Benchmark data may include third-party works under their own licences. Applicable
+terms, copyright holders, redistribution status, and full licence texts are
+recorded in LICENSE-DATA.md.
 
 Brand assets under assets/ are excluded from the Apache-2.0 grant; see the same
 file.

@@ -1,13 +1,10 @@
 # Data licensing
 
-The Apache-2.0 licence in [`LICENSE`](LICENSE) covers KITE source code and
-original documentation. It does **not** cover benchmark data or content derived
-from it.
-
-KITE normally keeps benchmark datasets and generated artifacts outside source
-and package distributions. The explicit exception is LoCoMo-ASR dataset
-v1.0.0: eight JSON files committed under `benchmarks/locomo_asr/data/`. These
-files remain outside the PyPI wheel and source distribution.
+The Apache-2.0 licence in [`LICENSE`](LICENSE) covers the source code in this
+repository. It does **not** cover benchmark data or anything derived from it.
+Benchmark datasets and locally derived artifacts normally remain outside KITE's
+repository and Python distributions. LoCoMo-ASR v1.0.0 is the documented
+repository exception and remains outside wheel and sdist packages.
 
 ## Source datasets
 
@@ -38,20 +35,6 @@ pipeline provenance, counts, and hashes are recorded in
   Whisper transcription.
 - KITE also creates local derived codebooks and run outputs that may quote the
   source conversations.
-
-## LoCoMo-ASR media and generation inputs
-
-The LoCoMo-ASR JSON files preserve upstream `img_url` values, including
-external URLs and inline media. Separate third-party rights may apply; neither
-Apache-2.0 nor this distribution grants additional rights to that media.
-
-The optional generation path uses external Piper software and voice models,
-MUSAN recordings, a Whisper checkpoint, and pyroomacoustics. Those assets,
-package distributions, intermediate audio files, and prebuilt environments are
-not redistributed. The per-voice model cards do not expressly state rights for
-the ONNX artifacts, synthesized audio, or downstream ASR text; distributing
-the JSON files is not blanket clearance of the voice pipeline. See
-[`benchmarks/locomo_asr/THIRD_PARTY_NOTICES.md`](benchmarks/locomo_asr/THIRD_PARTY_NOTICES.md).
 
 ## Derived codebooks
 
